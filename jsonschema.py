@@ -82,39 +82,31 @@ def produce_schema(root_stmt, main_node):
 
     # Handle usual case
     if hasattr(root_stmt, 'i_children') and len(root_stmt.i_children) != 0:
-        for child in root_stmt.i_children:
-            if child.keyword in statements.data_definition_keywords:
-                if child.keyword in producers:
-                    logging.debug("keyword hit on: %s %s",
-                                  child.keyword, child.arg)
-                    add = producers[child.keyword](child)
-                    result.update(add)
-                else:
-                    logging.debug("keyword miss on: %s %s",
-                                  child.keyword, child.arg)
-            else:
-                logging.debug("keyword not in data_definition_keywords: %s %s", child.keyword,
-                              child.arg)
+        produce_children(root_stmt, result)
     else:
-        # Handle grouping only
+        # Handle grouping only, get the main grouping node
         groupings = root_stmt.search("grouping")
         for group in groupings:
             if group.arg == main_node:
-                for child in group.i_children:
-                    if child.keyword in statements.data_definition_keywords:
-                        if child.keyword in producers:
-                            logging.debug("keyword hit on: %s %s",
-                                          child.keyword, child.arg)
-                            add = producers[child.keyword](child)
-                            result.update(add)
-                        else:
-                            logging.debug("keyword miss on: %s %s",
-                                          child.keyword, child.arg)
-                    else:
-                        logging.debug("keyword not in data_definition_keywords: %s %s", child.keyword,
-                                      child.arg)
+                produce_children(group, result)
 
     return result
+
+
+def produce_children(stmt, result):
+    for child in stmt.i_children:
+        if child.keyword in statements.data_definition_keywords:
+            if child.keyword in producers:
+                logging.debug("keyword hit on: %s %s",
+                              child.keyword, child.arg)
+                add = producers[child.keyword](child)
+                result.update(add)
+            else:
+                logging.debug("keyword miss on: %s %s",
+                              child.keyword, child.arg)
+        else:
+            logging.debug("keyword not in data_definition_keywords: %s %s", child.keyword,
+                          child.arg)
 
 
 def produce_leaf(stmt):
@@ -163,11 +155,11 @@ def produce_leaf_list(stmt):
 
     if types.is_base_type(type_id) or type_id in _other_type_trans_tbl:
         type_str = produce_type(type_stmt)
-        result = {arg: {"type": "array", "items": [type_str]}}
+        result = {arg: {"type": "array", "items": type_str}}
     else:
         logging.debug("Missing mapping of base type: %s %s, type: %s",
                       stmt.keyword, stmt.arg, type_id)
-        result = {arg: {"type": "array", "items": [{"type": "string"}]}}
+        result = {arg: {"type": "array", "items": {"type": "string"}}}
     return result
 
 
@@ -196,7 +188,6 @@ def produce_choice(stmt):
 
     result = {}
 
-    # https://tools.ietf.org/html/rfc6020#section-7.9.2
     for case in stmt.search("case"):
         if hasattr(case, 'i_children'):
             for child in case.i_children:
@@ -222,14 +213,6 @@ def produce_choice(stmt):
     return result
 
 
-def produce_grouping(stmt):
-    logging.debug("in produce_grouping: %s %s", stmt.keyword, stmt.arg)
-
-    result = {}
-
-    return result
-
-
 def string_trans(stmt):
     logging.debug("in string_trans with stmt %s %s", stmt.keyword, stmt.arg)
     result = {"type": "string"}
@@ -246,8 +229,7 @@ def enumeration_trans(stmt):
 
     }
     for enum in stmt.search("enum"):
-        # TODO: assign type from start
-        result["type"] = _java_type_trans_tnl[type(
+        result["type"] = _python_type_trans_tnl[type(
             enum.i_value).__name__]
         result["enum"].append(enum.i_value)
         result["javaEnums"].append({"name": enum.arg})
@@ -271,7 +253,12 @@ def boolean_trans(stmt):
 
 def empty_trans(stmt):
     logging.debug("in empty_trans with stmt %s %s", stmt.keyword, stmt.arg)
-    result = {"type": "array", "items": [{"type": "null"}]}
+    result = {
+        "type": "array",
+        "items": {
+            "type": "null"
+        }
+    }
     # Likely needs more/other work per:
     #  https://tools.ietf.org/html/draft-ietf-netmod-yang-json-10#section-6.9
     return result
@@ -279,7 +266,9 @@ def empty_trans(stmt):
 
 def union_trans(stmt):
     logging.debug("in union_trans with stmt %s %s", stmt.keyword, stmt.arg)
-    result = {"oneOf": []}
+    result = {
+        "oneOf": []
+    }
     for member in stmt.search("type"):
         member_type = produce_type(member)
         result["oneOf"].append(member_type)
@@ -308,20 +297,20 @@ producers = {
     "choice":       produce_choice,
 }
 
-_java_type_trans_tnl = {
+_python_type_trans_tnl = {
     "int": "integer",
     "string": "string"
 }
 
 _numeric_type_trans_tbl = {
-    "int8": ("number", None),
-    "int16": ("number", None),
-    "int32": ("number", "int32"),
-    "int64": ("integer", "int64"),
-    "uint8": ("number", None),
-    "uint16": ("number", None),
-    "uint32": ("integer", "uint32"),
-    "uint64": ("integer", "uint64")
+    "int8": ("integer", None),
+    "int16": ("integer", None),
+    "int32": ("integer", None),
+    "int64": ("integer", None),
+    "uint8": (None, "java.lang.Short"),
+    "uint16": ("integer", None),
+    "uint32": (None, "java.lang.Long"),
+    "uint64": (None, "java.math.BigDecimal")
 }
 
 
@@ -366,9 +355,12 @@ _other_type_trans_tbl = {
 
 def numeric_type_trans(dtype):
     trans_type = _numeric_type_trans_tbl[dtype][0]
-    # Should include format string in return value
-    # tformat = _numeric_type_trans_tbl[dtype][1]
-    return {"type": trans_type}
+    if trans_type is not None:
+        return {"type": trans_type}
+    return {
+        "type": "object",
+        "existingJavaType": _numeric_type_trans_tbl[dtype][1]
+    }
 
 
 def other_type_trans(dtype, stmt):
