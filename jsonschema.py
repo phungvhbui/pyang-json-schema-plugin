@@ -29,12 +29,6 @@ class JSONSchemaPlugin(plugin.PyangPlugin):
                                  dest='schema_debug',
                                  action="store_true",
                                  help='JSON Schema debug'),
-            optparse.make_option('--jsonschema-path',
-                                 dest='schema_path',
-                                 help='JSON Schema path'),
-            optparse.make_option('--jsonschema-title',
-                                 dest='schema_title',
-                                 help='JSON Schema title'),
             optparse.make_option('--jsonschema-main',
                                  dest='main_node',
                                  help='JSON Schema main node'),
@@ -57,7 +51,7 @@ class JSONSchemaPlugin(plugin.PyangPlugin):
             print("")
 
         if ctx.opts.main_node is None:
-            logging.error("no main node found")
+            logging.debug("no main node found")
 
         logging.debug("main node: %s", ctx.opts.main_node)
         main = ctx.opts.main_node
@@ -226,7 +220,6 @@ def enumeration_trans(stmt):
         "type": "object",
         "enum": [],
         "javaEnums": []
-
     }
     for enum in stmt.search("enum"):
         result["type"] = _python_type_trans_tnl[type(
